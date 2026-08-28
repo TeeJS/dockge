@@ -3,7 +3,7 @@ name: Build Fork Image
 on:
   push:
     branches:
-      - claude/dockge-upstream-sync-0e04c6
+      - master
   workflow_dispatch:
 
 permissions:
@@ -53,4 +53,6 @@ jobs:
           target: release
           platforms: linux/amd64
           push: true
-          tags: ghcr.io/${{ steps.repo.outputs.owner }}/dockge:test
+          tags: |
+            ghcr.io/${{ steps.repo.outputs.owner }}/dockge:latest
+            ghcr.io/${{ steps.repo.outputs.owner }}/dockge:test
