@@ -300,6 +300,11 @@ export class Stack {
 
     async getServiceStats(): Promise<Map<string, StatsData>> {
         const serviceStats = new Map<string, StatsData>();
+        // Skip stacks whose directory isn't present (e.g. externally-managed
+        // compose projects); spawning in a missing cwd throws "docker ENOENT".
+        if (!await fileExists(this.path)) {
+            return serviceStats;
+        }
         try {
             const statsRes = await childProcessAsync.spawn("docker", [ "compose", "stats", "--no-stream", "--format", "json" ], {
                 cwd: this.path,
@@ -335,6 +340,12 @@ export class Stack {
     async updateData() {
         const services = new Map<string, ServiceData>();
         const composeDocument = this.composeDocument;
+
+        // Skip stacks whose directory isn't present (e.g. externally-managed
+        // compose projects); spawning in a missing cwd throws "docker ENOENT".
+        if (!await fileExists(this.path)) {
+            return;
+        }
 
         try {
             const res = await childProcessAsync.spawn("docker", [ "compose", "ps", "--all", "--format", "json" ], {
