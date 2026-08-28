@@ -251,6 +251,14 @@ export class Stack {
 
         // Everthing is good, writing the main files
         await this.saveFiles(path.join(dir, this._composeFileName), path.join(dir, ".env"));
+
+        // Set ownership of the stack dir and files if PUID/PGID are configured
+        if (process.env.PUID && process.env.PGID) {
+            const uid = Number(process.env.PUID);
+            const gid = Number(process.env.PGID);
+            fs.lchownSync(dir, uid, gid);
+            fs.chownSync(path.join(dir, this._composeFileName), uid, gid);
+        }
     }
 
     private async saveFiles(yamlPath: string, envPath: string) {

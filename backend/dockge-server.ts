@@ -701,10 +701,39 @@ export class DockgeServer {
                 return res.stdout?.toString();
             }
         } catch (e) {
-            log.error("getDockerStats", e);
+            log.error("getContainerInspectData", e);
         }
 
         return "";
+    }
+
+    async getDockerStats() : Promise<Map<string, object>> {
+        let stats = new Map<string, object>();
+
+        try {
+            let res = await childProcessAsync.spawn("docker", [ "stats", "--format", "json", "--no-stream" ], {
+                encoding: "utf-8",
+            });
+
+            if (!res.stdout) {
+                return stats;
+            }
+
+            let lines = res.stdout?.toString().split("\n");
+
+            for (let line of lines) {
+                try {
+                    let obj = JSON.parse(line);
+                    stats.set(obj.Name, obj);
+                } catch (e) {
+                }
+            }
+
+            return stats;
+        } catch (e) {
+            log.error("getDockerStats", e);
+            return stats;
+        }
     }
 
     get stackDirFullPath() {
