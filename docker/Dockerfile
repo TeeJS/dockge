@@ -17,6 +17,9 @@ RUN npm ci --omit=dev
 ############################################
 FROM louislam/dockge:base AS release
 WORKDIR /app
+# skopeo is required by the fork's image-update-check feature and is not in the
+# upstream louislam/dockge:base image, so install it here.
+RUN apt-get update && apt-get install --yes --no-install-recommends skopeo && rm -rf /var/lib/apt/lists/*
 COPY --chown=node:node --from=build_healthcheck /app/extra/healthcheck /app/extra/healthcheck
 COPY --from=build /app/node_modules /app/node_modules
 COPY --chown=node:node  . .
