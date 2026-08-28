@@ -1,0 +1,55 @@
+name: Upstream Sync Check
+
+# Weekly check for new commits on louislam/dockge (upstream). When upstream is
+# ahead, opens/updates a single tracking issue listing the new commits so a
+# Claude-assisted sync can be run. It deliberately does NOT auto-merge: this
+# fork diverges heavily, and even conflict-free merges have introduced silent
+# bugs (duplicate socket handlers, a DB migration collision), so the merge
+# needs human/Claude review.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check upstream and notify
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/louislam/dockge
+          git fetch --quiet upstream master
+
+          COUNT=$(git rev-list --count HEAD..upstream/master)
+          echo "Upstream is $COUNT commit(s) ahead of master"
+          if [ "$COUNT" = "0" ]; then
+            echo "Fork is up to date with upstream — nothing to do."
+            exit 0
+          fi
+
+          LATEST=$(git rev-parse --short upstream/master)
+          LIST=$(git log --oneline --no-merges HEAD..upstream/master | head -50)
+          TITLE="Upstream sync: $COUNT new commit(s) from louislam/dockge"
+          BODY=$(printf 'Upstream **louislam/dockge** is **%s commit(s) ahead** of `master` (latest `%s`).\n\nRun a Claude-assisted sync — the merge needs manual conflict resolution, and even conflict-free merges have introduced silent bugs on this fork (duplicate socket handlers, a migration collision), so do not auto-merge.\n\nNew upstream commits:\n\n```\n%s\n```\n\n_Auto-generated weekly by `.github/workflows/upstream-sync-check.yml` — updates in place, so this issue always reflects the current gap._' "$COUNT" "$LATEST" "$LIST")
+
+          EXISTING=$(gh issue list --state open --search "Upstream sync in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue edit "$EXISTING" --title "$TITLE" --body "$BODY"
+            echo "Updated tracking issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi
