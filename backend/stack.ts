@@ -115,11 +115,19 @@ export class Stack {
         return this._status == RUNNING || this._status == RUNNING_AND_EXITED || this._status == UNHEALTHY;
     }
 
-    async validate() {
+    /**
+     * Allow-list stack names so path.join(stacksDir, name) cannot escape stacksDir.
+     * Ported from louislam/dockge#997.
+     */
+    static validateName(name: string) {
         // Check name, allows [a-z][0-9] _ - only
-        if (!this.name.match(/^[a-z0-9_-]+$/)) {
+        if (!name.match(/^[a-z0-9_-]+$/)) {
             throw new ValidationError("Stack name can only contain [a-z][0-9] _ - only");
         }
+    }
+
+    async validate() {
+        Stack.validateName(this.name);
 
         // Check YAML format
         yaml.parse(this.composeYAML);
@@ -577,6 +585,8 @@ export class Stack {
     }
 
     static async getStack(server: DockgeServer, stackName: string, useCache = true) : Promise<Stack> {
+        Stack.validateName(stackName);
+
         let dir = path.join(server.stacksDir, stackName);
 
         if (useCache) {

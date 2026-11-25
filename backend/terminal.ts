@@ -125,6 +125,12 @@ export class Terminal {
                 cwd: this.cwd,
                 cols: TERMINAL_COLS,
                 rows: this.rows,
+                env: {
+                    ...process.env,
+                    // Without TERM, clear, readline Ctrl+L and colors don't work in the
+                    // web console. Ported from louislam/dockge#1012.
+                    TERM: "xterm-256color",
+                },
             });
 
             // On Data
