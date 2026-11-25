@@ -10,6 +10,7 @@ import {
     ValidationError
 } from "../util-server";
 import { AgentMaintenance } from "../agent-maintenance";
+import { getSelfUpdateInfo, startSelfUpdate } from "../self-update";
 import { DockerArtefactAction, DockerArtefactData, DockerArtefactInfos } from "../../common/types";
 
 export class AgentMaintenanceSocketHandler extends AgentSocketHandler {
@@ -102,6 +103,39 @@ export class AgentMaintenanceSocketHandler extends AgentSocketHandler {
                 callbackResult({
                     ok: true,
                     msg: "Successfully pruned",
+                    msgi18n: true,
+                }, callback);
+            } catch (e) {
+                callbackError(e, callback);
+            }
+        });
+
+        // Whether this Dockge can update itself, if a newer image exists, and the last update's result
+        agentSocket.on("getSelfUpdateInfo", async (checkRemote: unknown, callback) => {
+            try {
+                checkLogin(socket);
+
+                const info = await getSelfUpdateInfo(checkRemote === true);
+
+                callbackResult({
+                    ok: true,
+                    info,
+                }, callback);
+            } catch (e) {
+                callbackError(e, callback);
+            }
+        });
+
+        // Update this Dockge: a helper container pulls the new image and recreates Dockge's container
+        agentSocket.on("selfUpdate", async (callback) => {
+            try {
+                checkLogin(socket);
+
+                await startSelfUpdate();
+
+                callbackResult({
+                    ok: true,
+                    msg: "selfUpdateStarted",
                     msgi18n: true,
                 }, callback);
             } catch (e) {

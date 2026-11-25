@@ -41,9 +41,16 @@ stackStatusList<template>
                                     <font-awesome-icon v-if="endpoint !== ''" class="ms-3 action-icon" icon="trash" @click="showRemoveAgentDialog[agent.endpoint] = !showRemoveAgentDialog[agent.endpoint]" />
                                 </div>
 
-                                <router-link v-if="agentStatusList[endpoint] === 'online'" class="btn btn-sm btn-normal" data-toggle="tooltip" :title="$t('tooltipAgentMaintenance')" :to="getAgentRouteLink(agent)">
-                                    <font-awesome-icon icon="wrench" class="me-2" />{{ $t("maintenance") }}
-                                </router-link>
+                                <div v-if="agentStatusList[endpoint] === 'online'" class="d-flex flex-wrap gap-2 justify-content-end">
+                                    <!-- Update Dockge itself -->
+                                    <button v-if="selfUpdateInfo[endpoint]?.canUpdate" class="btn btn-sm btn-normal" data-toggle="tooltip" :title="$t('tooltipSelfUpdate')" @click="showSelfUpdateDialog[endpoint] = true">
+                                        <font-awesome-icon icon="cloud-arrow-down" class="me-2" />{{ $t("selfUpdate") }}
+                                    </button>
+
+                                    <router-link class="btn btn-sm btn-normal" data-toggle="tooltip" :title="$t('tooltipAgentMaintenance')" :to="getAgentRouteLink(agent)">
+                                        <font-awesome-icon icon="wrench" class="me-2" />{{ $t("maintenance") }}
+                                    </router-link>
+                                </div>
                             </div>
 
                             <div class="mb-3">
@@ -57,6 +64,13 @@ stackStatusList<template>
                                     <span v-else-if="agentStatusList[endpoint] === 'offline'" class="badge bg-danger me-2">{{ $t("agentOffline") }}</span>
                                     <span v-else class="badge bg-secondary me-2">{{ $t(agentStatusList[endpoint]) }}</span>
                                 </template>
+                                <template v-if="agentStatusList[endpoint] === 'online' && selfUpdateInfo[endpoint]?.canUpdate">
+                                    <span v-if="selfUpdateInfo[endpoint].lastRun?.running" class="badge bg-info me-2">{{ $t("selfUpdateRunning") }}</span>
+                                    <span v-else-if="selfUpdateInfo[endpoint].updateAvailable" class="badge bg-info me-2 clickable" @click="showSelfUpdateDialog[endpoint] = true">
+                                        <font-awesome-icon icon="arrow-up" class="me-1" />{{ $t("selfUpdateAvailable") }}
+                                    </span>
+                                    <span v-if="selfUpdateFailed(endpoint)" class="badge bg-danger me-2 clickable" @click="showSelfUpdateDialog[endpoint] = true">{{ $t("selfUpdateFailed") }}</span>
+                                </template>
                                 <template v-if="Object.keys(agentList).length > 1">
                                     <template v-for="(info, index) in statusInfos" :key="index">
                                         <template v-if="getEndpointStatusCount(endpoint, info.statusIds) > 0">
@@ -69,6 +83,19 @@ stackStatusList<template>
                             <!-- Edit Dialog -->
                             <BModal v-model="showEditAgentNameDialog[agent.endpoint]" :title="!!endpoint ? endpoint : 'Master'" :no-close-on-backdrop="true" :close-on-esc="true" :okTitle="$t('Update Name')" okVariant="primary" @ok="updateAgentName(agent, editAgentNewName[agent.endpoint])">
                                 <input :id="'nameUpdate' + agent.endpoint" v-model="editAgentNewName[agent.endpoint]" type="text" class="form-control">
+                            </BModal>
+
+                            <!-- Self-update Dialog -->
+                            <BModal v-model="showSelfUpdateDialog[endpoint]" :title="$t('selfUpdate') + ': ' + getAgentName(agent)" :no-close-on-backdrop="true" :close-on-esc="true" :okTitle="$t('selfUpdate')" okVariant="primary" :ok-disabled="!!selfUpdateInfo[endpoint]?.lastRun?.running" @ok="startSelfUpdate(endpoint)">
+                                <p>{{ $t("selfUpdateMsg") }}</p>
+                                <p v-if="selfUpdateInfo[endpoint]?.canUpdate" class="small text-muted mb-3">
+                                    <code>{{ selfUpdateInfo[endpoint].imageRef }}</code><br>
+                                    {{ selfUpdateInfo[endpoint].workingDir }} ({{ selfUpdateInfo[endpoint].project }}/{{ selfUpdateInfo[endpoint].service }})
+                                </p>
+                                <template v-if="selfUpdateInfo[endpoint]?.lastRun">
+                                    <h6>{{ $t("selfUpdateLastRun") }}: {{ formatSelfUpdateRun(selfUpdateInfo[endpoint].lastRun) }}</h6>
+                                    <pre class="self-update-log">{{ selfUpdateInfo[endpoint].lastRun.log || "-" }}</pre>
+                                </template>
                             </BModal>
 
                             <!-- Remove Agent Dialog -->
@@ -149,7 +176,10 @@ export default defineComponent({
             showEditAgentNameDialog: {},
             editAgentNewName: {},
             connectingAgent: false,
-            newAgent: {}
+            newAgent: {},
+            // Self-update info per agent endpoint (from the "getSelfUpdateInfo" agent event)
+            selfUpdateInfo: {},
+            showSelfUpdateDialog: {},
         };
     },
 
@@ -203,6 +233,21 @@ export default defineComponent({
         page() {
             this.getImportantHeartbeatListPaged();
         },
+
+        // When an agent comes (back) online, e.g. after Dockge restarted itself, refresh its self-update info
+        agentStatusList: {
+            deep: true,
+            handler(newList: Record<string, string>) {
+                for (const [ endpoint, status ] of Object.entries(newList)) {
+                    if (status !== "online") {
+                        // Forget it, so it is reloaded once the agent is back
+                        delete this.selfUpdateInfo[endpoint];
+                    } else if (this.selfUpdateInfo[endpoint] === undefined) {
+                        this.loadSelfUpdateInfo(endpoint);
+                    }
+                }
+            },
+        },
     },
 
     mounted() {
@@ -212,6 +257,12 @@ export default defineComponent({
         this.updatePerPage();
 
         this.resetNewAgent();
+
+        for (const [ endpoint, status ] of Object.entries(this.agentStatusList)) {
+            if (status === "online") {
+                this.loadSelfUpdateInfo(endpoint);
+            }
+        }
     },
 
     beforeUnmount() {
@@ -226,6 +277,48 @@ export default defineComponent({
 
         getAgentName(agent) {
             return this.$root.getAgentName(agent.endpoint);
+        },
+
+        loadSelfUpdateInfo(endpoint: string) {
+            // Mark as loading, so the status watcher does not ask twice
+            this.selfUpdateInfo[endpoint] = null;
+
+            // Agents running an older Dockge don't know this event and never answer: no button is shown for them
+            this.$root.emitAgent(endpoint, "getSelfUpdateInfo", true, (res) => {
+                if (res.ok) {
+                    this.selfUpdateInfo[endpoint] = res.info;
+
+                    // While an update runs, check again until it is finished (or Dockge restarts)
+                    if (res.info?.lastRun?.running) {
+                        setTimeout(() => this.loadSelfUpdateInfo(endpoint), 5000);
+                    }
+                }
+            });
+        },
+
+        startSelfUpdate(endpoint: string) {
+            this.$root.emitAgent(endpoint, "selfUpdate", (res) => {
+                this.$root.toastRes(res);
+
+                if (res.ok) {
+                    // Dockge restarts in a few seconds; the status watcher reloads the info when it is back
+                    setTimeout(() => this.loadSelfUpdateInfo(endpoint), 2000);
+                }
+            });
+        },
+
+        selfUpdateFailed(endpoint: string): boolean {
+            const lastRun = this.selfUpdateInfo[endpoint]?.lastRun;
+            return !!lastRun && !lastRun.running && lastRun.exitCode !== 0;
+        },
+
+        formatSelfUpdateRun(lastRun): string {
+            if (lastRun.running) {
+                return this.$t("selfUpdateRunning");
+            }
+            const when = lastRun.finishedAt ? new Date(lastRun.finishedAt).toLocaleString() : "";
+            const result = lastRun.exitCode === 0 ? this.$t("selfUpdateSucceeded") : this.$t("selfUpdateFailed");
+            return `${result} ${when}`.trim();
         },
 
         getAgentRouteLink(agent) {
@@ -400,6 +493,18 @@ export default defineComponent({
 .num {
     cursor: pointer;
     font-weight: bold;
+}
+
+.clickable {
+    cursor: pointer;
+}
+
+.self-update-log {
+    max-height: 300px;
+    overflow: auto;
+    font-size: 0.75rem;
+    white-space: pre-wrap;
+    word-break: break-all;
 }
 
 .url {
