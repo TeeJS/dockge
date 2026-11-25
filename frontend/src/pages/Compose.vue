@@ -369,8 +369,8 @@ export default defineComponent({
             stopUpdateTimeouts: false,
             showUpdateDialog: false,
             updateDialogData: {
-                pruneAfterUpdate: false,
-                pruneAllAfterUpdate: false
+                pruneAfterUpdate: true,
+                pruneAllAfterUpdate: true
             }
         };
     },
@@ -557,8 +557,8 @@ export default defineComponent({
     methods: {
         resetUpdateDialog() {
             this.updateDialogData = {
-                pruneAfterUpdate: false,
-                pruneAllAfterUpdate: false
+                pruneAfterUpdate: true,
+                pruneAllAfterUpdate: true
             };
         },
 

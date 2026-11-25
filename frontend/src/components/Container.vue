@@ -280,8 +280,8 @@ export default defineComponent({
             showConfig: false,
             expandedStats: false,
             updateDialogData: {
-                pruneAfterUpdate: false,
-                pruneAllAfterUpdate: false
+                pruneAfterUpdate: true,
+                pruneAllAfterUpdate: true
             }
         };
     },
@@ -421,8 +421,8 @@ export default defineComponent({
     methods: {
         resetUpdateDialog() {
             this.updateDialogData = {
-                pruneAfterUpdate: false,
-                pruneAllAfterUpdate: false
+                pruneAfterUpdate: true,
+                pruneAllAfterUpdate: true
             };
         },
 
