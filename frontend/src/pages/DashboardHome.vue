@@ -1,4 +1,4 @@
-stackStatusList<template>
+<template>
     <transition ref="tableContainer" name="slide-fade" appear>
         <div v-if="$route.name === 'DashboardHome'">
             <h1 class="mb-3">
@@ -18,7 +18,57 @@ stackStatusList<template>
                                 </div>
                             </template>
                         </div>
+
+                        <!-- Update all stacks with a newer image -->
+                        <div v-if="updatableStacks.length > 0 || updateAll.running" class="mt-4">
+                            <button class="btn btn-info" data-toggle="tooltip" :title="$t('tooltipUpdateAll')" @click="openUpdateAllDialog">
+                                <font-awesome-icon icon="cloud-arrow-down" class="me-2" />
+                                <template v-if="updateAll.running">{{ $t("updateAllRunning") }}</template>
+                                <template v-else>{{ $t("updateAll") }} ({{ updatableStacks.length }})</template>
+                            </button>
+                        </div>
                     </div>
+
+                    <!-- Update All Dialog -->
+                    <BModal v-model="showUpdateAllDialog" :title="$t('updateAll')" size="lg" :no-close-on-backdrop="true" :close-on-esc="!updateAll.running" :hide-header-close="updateAll.running" :okTitle="updateAll.items.length > 0 && !updateAll.running ? $t('close') : $t('updateAll')" okVariant="primary" :ok-disabled="updateAll.running || (updateAll.items.length === 0 && selectedUpdateCount === 0)" :ok-only="updateAll.running || updateAll.items.length > 0" @ok="onUpdateAllOk">
+                        <!-- Choose stacks -->
+                        <template v-if="updateAll.items.length === 0">
+                            <p>{{ $t("updateAllMsg") }}</p>
+                            <div v-for="stack in updatableStacks" :key="stack.name + '_' + stack.endpoint" class="form-check">
+                                <input :id="'updateAll_' + stack.name + '_' + stack.endpoint" v-model="updateAllSelection[stack.name + '_' + stack.endpoint]" class="form-check-input" type="checkbox">
+                                <label class="form-check-label" :for="'updateAll_' + stack.name + '_' + stack.endpoint">
+                                    {{ stack.name }}
+                                    <span v-if="Object.keys(agentList).length > 1" class="text-muted small">({{ $root.getAgentName(stack.endpoint) }})</span>
+                                </label>
+                            </div>
+
+                            <hr>
+                            <BFormCheckbox v-model="updateAll.prune" switch><span v-html="$t('pruneAfterUpdate')"></span></BFormCheckbox>
+                            <div class="ms-4 mt-1">
+                                <BFormCheckbox v-model="updateAll.pruneAll" :disabled="!updateAll.prune"><span v-html="$t('pruneAllAfterUpdate')"></span></BFormCheckbox>
+                            </div>
+                            <p class="small text-muted mt-2 mb-0">{{ $t("updateAllPruneNote") }}</p>
+                        </template>
+
+                        <!-- Progress -->
+                        <template v-else>
+                            <p v-if="updateAll.running">{{ $t("updateAllKeepOpen") }}</p>
+                            <ul class="list-unstyled mb-0">
+                                <li v-for="item in updateAll.items" :key="item.name + '_' + item.endpoint" class="mb-1">
+                                    <font-awesome-icon v-if="item.state === 'running'" icon="rotate" spin class="me-2" />
+                                    <font-awesome-icon v-else-if="item.state === 'ok'" icon="check" class="me-2 text-success" />
+                                    <font-awesome-icon v-else-if="item.state === 'error'" icon="times" class="me-2 text-danger" />
+                                    <span v-else class="me-2 pending-dot">·</span>
+                                    <router-link :to="getStackUrl(item)" @click="showUpdateAllDialog = false">{{ item.name }}</router-link>
+                                    <span v-if="Object.keys(agentList).length > 1" class="text-muted small"> ({{ $root.getAgentName(item.endpoint) }})</span>
+                                    <span v-if="item.state === 'error'" class="text-danger small ms-2">{{ item.msg }}</span>
+                                </li>
+                            </ul>
+                            <p v-if="!updateAll.running" class="mt-3 mb-0">
+                                {{ $t("updateAllDone", { ok: updateAllCount('ok'), failed: updateAllCount('error') }) }}
+                            </p>
+                        </template>
+                    </BModal>
 
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h4>{{ $tc("dockgeAgent", 2) }}</h4>
@@ -153,6 +203,15 @@ import { defineComponent } from "vue";
 import { AgentData, SimpleStackData } from "../../../common/types";
 import { StackFilter, StackStatusInfo } from "../../../common/util-common";
 
+type UpdateAllItem = {
+    name: string,
+    endpoint: string,
+    // Prune images after this stack (the last one of its agent)
+    prune: boolean,
+    state: "pending" | "running" | "ok" | "error",
+    msg: string,
+};
+
 export default defineComponent({
     components: {
 
@@ -180,6 +239,15 @@ export default defineComponent({
             // Self-update info per agent endpoint (from the "getSelfUpdateInfo" agent event)
             selfUpdateInfo: {},
             showSelfUpdateDialog: {},
+            // Update all
+            showUpdateAllDialog: false,
+            updateAllSelection: {} as Record<string, boolean>,
+            updateAll: {
+                running: false,
+                prune: true,
+                pruneAll: true,
+                items: [] as UpdateAllItem[],
+            },
         };
     },
 
@@ -195,6 +263,16 @@ export default defineComponent({
         },
         statusInfos(): StackStatusInfo[] {
             return StackStatusInfo.ALL;
+        },
+        // Running stacks with a newer image that Dockge can update (same condition as the ↑ in the stack list;
+        // stacks outside the stacks folder can't be updated from Dockge, so they are left out)
+        updatableStacks(): SimpleStackData[] {
+            return (Object.values(this.stackList) as SimpleStackData[])
+                .filter(s => s.started && s.imageUpdatesAvailable && s.isManagedByDockge && this.agentStatusList[s.endpoint] === "online")
+                .sort((a, b) => a.name.localeCompare(b.name));
+        },
+        selectedUpdateCount(): number {
+            return this.updatableStacks.filter(s => this.updateAllSelection[s.name + "_" + s.endpoint]).length;
         },
         stackStatusCountByEndpoint(): Map<string, Map<number, number>> {
             const counts = new Map<string, Map<number, number>>();
@@ -277,6 +355,85 @@ export default defineComponent({
 
         getAgentName(agent) {
             return this.$root.getAgentName(agent.endpoint);
+        },
+
+        openUpdateAllDialog() {
+            if (!this.updateAll.running) {
+                // Start fresh: every updatable stack ticked, no previous results
+                this.updateAll.items = [];
+                this.updateAllSelection = Object.fromEntries(this.updatableStacks.map(s => [ s.name + "_" + s.endpoint, true ]));
+            }
+            this.showUpdateAllDialog = true;
+        },
+
+        onUpdateAllOk(bvModalEvt) {
+            if (this.updateAll.items.length > 0) {
+                // Finished: "Close"
+                return;
+            }
+            // Keep the dialog open to show the progress
+            bvModalEvt.preventDefault();
+            this.runUpdateAll();
+        },
+
+        async runUpdateAll() {
+            const selected = this.updatableStacks.filter(s => this.updateAllSelection[s.name + "_" + s.endpoint]);
+            if (selected.length === 0) {
+                return;
+            }
+
+            // Group by agent; prune once per agent, after its last stack, instead of after every stack
+            const items: UpdateAllItem[] = [];
+            const endpoints = [ ...new Set(selected.map(s => s.endpoint)) ];
+            for (const endpoint of endpoints) {
+                const stacks = selected.filter(s => s.endpoint === endpoint);
+                stacks.forEach((s, i) => items.push({
+                    name: s.name,
+                    endpoint,
+                    prune: this.updateAll.prune && i === stacks.length - 1,
+                    state: "pending",
+                    msg: "",
+                }));
+            }
+
+            this.updateAll.items = items;
+            this.updateAll.running = true;
+
+            // One at a time: pulls in parallel would compete for bandwidth and make failures hard to follow
+            for (const item of this.updateAll.items) {
+                item.state = "running";
+                const res = await this.emitAgentAsync(item.endpoint, "updateStack", item.name, item.prune, item.prune && this.updateAll.pruneAll);
+                item.state = res.ok ? "ok" : "error";
+                item.msg = res.ok ? "" : (res.msgi18n ? this.$t(res.msg) : res.msg);
+            }
+
+            this.updateAll.running = false;
+
+            const failed = this.updateAllCount("error");
+            this.$root.toastRes({
+                ok: failed === 0,
+                msg: this.$t("updateAllDone", {
+                    ok: this.updateAllCount("ok"),
+                    failed,
+                }),
+            });
+        },
+
+        emitAgentAsync(endpoint: string, eventName: string, ...args: unknown[]): Promise<{ ok: boolean, msg?: string, msgi18n?: boolean }> {
+            return new Promise((resolve) => {
+                this.$root.emitAgent(endpoint, eventName, ...args, (res) => resolve(res ?? {
+                    ok: false,
+                    msg: "No response",
+                }));
+            });
+        },
+
+        updateAllCount(state: UpdateAllItem["state"]): number {
+            return this.updateAll.items.filter(i => i.state === state).length;
+        },
+
+        getStackUrl(item: UpdateAllItem): string {
+            return item.endpoint ? `/compose/${item.name}/${item.endpoint}` : `/compose/${item.name}`;
         },
 
         loadSelfUpdateInfo(endpoint: string) {
