@@ -34,19 +34,29 @@ jobs:
           git remote add upstream https://github.com/louislam/dockge
           git fetch --quiet upstream master
 
-          COUNT=$(git rev-list --count HEAD..upstream/master)
-          echo "Upstream is $COUNT commit(s) ahead of master"
+          # Count by content, not commit IDs: commits we cherry-picked or ported
+          # have different SHAs but the same patch, and `git cherry` marks them "-".
+          PENDING=$(git cherry -v HEAD upstream/master | grep '^+' || true)
+          COUNT=$(printf '%s' "$PENDING" | grep -c . || true)
+          echo "Upstream has $COUNT commit(s) not yet in master"
+
+          EXISTING=$(gh issue list --state open --search "Upstream sync in:title" --json number --jq '.[0].number // empty')
+
           if [ "$COUNT" = "0" ]; then
             echo "Fork is up to date with upstream — nothing to do."
+            if [ -n "$EXISTING" ]; then
+              gh issue close "$EXISTING" --comment "Fork is caught up with louislam/dockge — closing."
+              echo "Closed tracking issue #$EXISTING"
+            fi
             exit 0
           fi
 
           LATEST=$(git rev-parse --short upstream/master)
-          LIST=$(git log --oneline --no-merges HEAD..upstream/master | head -50)
+          # "+ <full sha> <subject>" -> "<short sha> <subject>"
+          LIST=$(printf '%s\n' "$PENDING" | cut -c3-9,43- | head -50)
           TITLE="Upstream sync: $COUNT new commit(s) from louislam/dockge"
-          BODY=$(printf 'Upstream **louislam/dockge** is **%s commit(s) ahead** of `master` (latest `%s`).\n\nRun a Claude-assisted sync — the merge needs manual conflict resolution, and even conflict-free merges have introduced silent bugs on this fork (duplicate socket handlers, a migration collision), so do not auto-merge.\n\nNew upstream commits:\n\n```\n%s\n```\n\n_Auto-generated weekly by `.github/workflows/upstream-sync-check.yml` — updates in place, so this issue always reflects the current gap._' "$COUNT" "$LATEST" "$LIST")
+          BODY=$(printf 'Upstream **louislam/dockge** has **%s commit(s) not yet in** `master` (latest `%s`).\n\nRun a Claude-assisted sync — the merge needs manual conflict resolution, and even conflict-free merges have introduced silent bugs on this fork (duplicate socket handlers, a migration collision), so do not auto-merge.\n\nNew upstream commits:\n\n```\n%s\n```\n\n_Auto-generated weekly by `.github/workflows/upstream-sync-check.yml` — updates in place, so this issue always reflects the current gap._' "$COUNT" "$LATEST" "$LIST")
 
-          EXISTING=$(gh issue list --state open --search "Upstream sync in:title" --json number --jq '.[0].number // empty')
           if [ -n "$EXISTING" ]; then
             gh issue edit "$EXISTING" --title "$TITLE" --body "$BODY"
             echo "Updated tracking issue #$EXISTING"
