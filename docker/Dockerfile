@@ -32,6 +32,9 @@ RUN mkdir ./data
 # - https://github.com/microsoft/node-pty/issues/630#issuecomment-1987212447
 ENV UV_USE_IO_URING=0
 
+# Tells Dockge it runs in a container (version info, self-update)
+ENV DOCKGE_IS_CONTAINER=1
+
 VOLUME /app/data
 EXPOSE 5001
 HEALTHCHECK --interval=60s --timeout=30s --start-period=60s --retries=5 CMD extra/healthcheck
